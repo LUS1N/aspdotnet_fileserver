@@ -110,11 +110,12 @@ namespace FileUploadTest.Controllers
 
         [HttpDelete]
         [Route("api/values")]
-        public HttpResponseMessage DeleteContent([FromUri] string file = null)
+        public HttpResponseMessage DeleteContent(string file = null)
         {
             var path = HttpContext.Current.Server.MapPath($"{ROOT}/{file}");
 
             var fileInfo = new FileInfo(path);
+
             if (string.IsNullOrEmpty(file) || !fileInfo.Exists) return Request.CreateResponse(HttpStatusCode.NotFound);
 
             fileInfo.Delete();
@@ -173,8 +174,18 @@ namespace FileUploadTest.Controllers
                 file.Attributes = FileAttributes.Normal;
             }
         }
-        // POST api/values
-        public HttpResponseMessage Post([FromUri] string path)
+
+
+        [HttpPost]
+        [Route("api/values")]
+        public HttpResponseMessage CreateFileOrDir()
+        {
+            return CreateFileOrDirNested();
+        }
+
+        [HttpPost]
+        [Route("api/values/{*path}")]
+        public HttpResponseMessage CreateFileOrDirNested(string path = null)
         {
             HttpResponseMessage result;
             var httpRequest = HttpContext.Current.Request;
@@ -185,7 +196,9 @@ namespace FileUploadTest.Controllers
                 foreach (string file in httpRequest.Files)
                 {
                     var postedFile = httpRequest.Files[file];
-                    var fullPath = $"~/storage{path}/{postedFile.FileName}";
+
+                    // replace spaces with underscore if there are any, so it's url accesible
+                    var fullPath = $"{ROOT}{path}/{postedFile.FileName.Replace(' ', '_')}";
 
                     try
                     {
