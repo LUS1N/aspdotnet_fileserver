@@ -43,6 +43,68 @@ namespace FileUploadTest.Controllers
             return string.IsNullOrEmpty(file) ? GetDirectoryContents(localPath) : GetFile(localPath);
         }
 
+        [HttpDelete]
+        [Route("api/values")]
+        public HttpResponseMessage DeleteContent(string file = null)
+        {
+            var path = HttpContext.Current.Server.MapPath($"{ROOT}/{file}");
+
+            var fileInfo = new FileInfo(path);
+
+            if (string.IsNullOrEmpty(file) || !fileInfo.Exists) return Request.CreateResponse(HttpStatusCode.NotFound);
+
+            fileInfo.Delete();
+            return Request.CreateResponse(HttpStatusCode.OK);
+        }
+
+        [HttpDelete]
+        [Route("api/values/{*path}")]
+        public HttpResponseMessage DeleteNestedContent(string path, string file = null)
+        {
+            // dir path
+            var fullDirPath = HttpContext.Current.Server.MapPath($"{ROOT}/{path}");
+            // path with filename
+            var fullPath = string.IsNullOrEmpty(file) ? fullDirPath : $"{fullDirPath}/{file}";
+
+            // if file is provided - delete it
+            if (string.IsNullOrEmpty(file))
+                return Request.CreateResponse(DeleteDirectory(fullPath) ? HttpStatusCode.OK : HttpStatusCode.NotFound);
+
+            // if no path provided return 404, to avoid deleting the whole root
+            if (string.IsNullOrEmpty(path))
+                Request.CreateResponse(HttpStatusCode.NotFound);
+
+            return Request.CreateResponse(DeleteFile(fullPath) ? HttpStatusCode.OK : HttpStatusCode.NotFound);
+        }
+
+        [HttpPost]
+        [Route("api/values")]
+        public HttpResponseMessage CreateFileOrDir()
+        {
+            return CreateFileOrDirNested();
+        }
+
+        [HttpPost]
+        [Route("api/values/{*path}")]
+        public HttpResponseMessage CreateFileOrDirNested(string path = null)
+        {
+            var httpRequest = HttpContext.Current.Request;
+            var fullServerPath = HttpContext.Current.Server.MapPath(path != null ? $"{ROOT}/{path}" : ROOT);
+
+            if (httpRequest.Files.Count > 0)
+            {
+                return SaveFiles(path, httpRequest, fullServerPath);
+            }
+
+            // if dir exists return conflict
+            if (Directory.Exists(fullServerPath))
+                return Request.CreateResponse(HttpStatusCode.Conflict);
+
+            Directory.CreateDirectory(fullServerPath);
+            return Request.CreateResponse(HttpStatusCode.Created);
+        }
+
+
         private HttpResponseMessage GetFile(string localPath)
         {
             // if file doesn't exist return 404
@@ -80,6 +142,8 @@ namespace FileUploadTest.Controllers
             AddAllFiles(directory.GetFiles("*.*", SearchOption.TopDirectoryOnly), contents);
             AddAllDirectories(directory.GetDirectories(), contents);
 
+            // sort by name
+            contents = contents.OrderBy(o => o.Name).ToList();
             return Request.CreateResponse(HttpStatusCode.OK, contents);
         }
 
@@ -106,40 +170,6 @@ namespace FileUploadTest.Controllers
                     IsFile = true
                 });
             }
-        }
-
-        [HttpDelete]
-        [Route("api/values")]
-        public HttpResponseMessage DeleteContent(string file = null)
-        {
-            var path = HttpContext.Current.Server.MapPath($"{ROOT}/{file}");
-
-            var fileInfo = new FileInfo(path);
-
-            if (string.IsNullOrEmpty(file) || !fileInfo.Exists) return Request.CreateResponse(HttpStatusCode.NotFound);
-
-            fileInfo.Delete();
-            return Request.CreateResponse(HttpStatusCode.OK);
-        }
-
-        [HttpDelete]
-        [Route("api/values/{*path}")]
-        public HttpResponseMessage DeleteNestedContent(string path, string file = null)
-        {
-            // dir path
-            var fullDirPath = HttpContext.Current.Server.MapPath($"{ROOT}/{path}");
-            // path with filename
-            var fullPath = string.IsNullOrEmpty(file) ? fullDirPath : $"{fullDirPath}/{file}";
-
-            // if file is provided - delete it
-            if (string.IsNullOrEmpty(file))
-                return Request.CreateResponse(DeleteDirectory(fullPath) ? HttpStatusCode.OK : HttpStatusCode.NotFound);
-
-            // if no path provided return 404, to avoid deleting the whole root
-            if (string.IsNullOrEmpty(path))
-                Request.CreateResponse(HttpStatusCode.NotFound);
-
-            return Request.CreateResponse(DeleteFile(fullPath) ? HttpStatusCode.OK : HttpStatusCode.NotFound);
         }
 
         private bool DeleteFile(string fullPath)
@@ -176,49 +206,30 @@ namespace FileUploadTest.Controllers
         }
 
 
-        [HttpPost]
-        [Route("api/values")]
-        public HttpResponseMessage CreateFileOrDir()
-        {
-            return CreateFileOrDirNested();
-        }
+        
 
-        [HttpPost]
-        [Route("api/values/{*path}")]
-        public HttpResponseMessage CreateFileOrDirNested(string path = null)
+        private HttpResponseMessage SaveFiles(string path, HttpRequest httpRequest, string fullServerPath)
         {
-            HttpResponseMessage result;
-            var httpRequest = HttpContext.Current.Request;
-            if (httpRequest.Files.Count > 0)
+            var docfiles = new List<string>();
+            foreach (var file in httpRequest.Files.GetMultiple("files"))
             {
-                var docfiles = new List<string>();
-                path = path != null ? $"/{path}" : "";
-                foreach (string file in httpRequest.Files)
+                // replace spaces with underscore if there are any, so it's url accesible
+                var fileName = file.FileName.Replace(' ', '_');
+
+                var fullPathWFile = $"{fullServerPath}/{fileName}";
+
+                try
                 {
-                    var postedFile = httpRequest.Files[file];
-
-                    // replace spaces with underscore if there are any, so it's url accesible
-                    var fullPath = $"{ROOT}{path}/{postedFile.FileName.Replace(' ', '_')}";
-
-                    try
-                    {
-                        postedFile.SaveAs(HttpContext.Current.Server.MapPath(fullPath));
-                    }
-                    catch (DirectoryNotFoundException)
-                    {
-                        return Request.CreateResponse(HttpStatusCode.BadRequest, $"Directory {path} not found.");
-                    }
-
-                    docfiles.Add(fullPath);
+                    file.SaveAs(fullPathWFile);
                 }
-                result = Request.CreateResponse(HttpStatusCode.Created, docfiles);
-            }
-            else
-            {
-                result = Request.CreateResponse(HttpStatusCode.BadRequest);
-            }
+                catch (DirectoryNotFoundException)
+                {
+                    return Request.CreateResponse(HttpStatusCode.BadRequest, $"Directory {path} not found.");
+                }
 
-            return result;
+                docfiles.Add($"{path}/{fileName}");
+            }
+            return Request.CreateResponse(HttpStatusCode.Created, docfiles);
         }
 
         static readonly string[] SizeSuffixes =
